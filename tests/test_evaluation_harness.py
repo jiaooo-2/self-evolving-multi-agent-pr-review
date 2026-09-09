@@ -2,15 +2,9 @@ import os
 import tempfile
 import unittest
 
-from evoagent.evaluation_benchmark import (
-    baseline_reviewer,
-    candidate_reviewer,
-    generate_controlled_pr_cases,
-)
+from evoagent.evaluation_experiments import load_controlled_pr_cases
+from evoagent.evolution import RegressionEvaluator
 from evoagent.evaluation_harness import (
-    EndToEndEvaluationHarness,
-    FixtureRepairer,
-    comparison_summary,
     dataset_fingerprint,
     load_jsonl,
     one_to_one_match,
@@ -20,7 +14,7 @@ from evoagent.models import Finding, Severity
 
 class EndToEndEvaluationTests(unittest.TestCase):
     def test_generated_dataset_has_repository_level_split_and_expected_counts(self):
-        cases = generate_controlled_pr_cases()
+        cases = load_controlled_pr_cases()
         self.assertEqual(100, len(cases))
         self.assertEqual(40, sum(bool(item["expected_findings"]) for item in cases))
         self.assertEqual(60, sum(not item["expected_findings"] for item in cases))
@@ -34,7 +28,7 @@ class EndToEndEvaluationTests(unittest.TestCase):
         self.assertEqual(2, len(holdout_repos))
         self.assertFalse(validation_repos & holdout_repos)
         self.assertEqual(
-            {"synthetic-controlled"},
+            {"offline-fixture"},
             {item["source"]["kind"] for item in cases},
         )
 
@@ -54,36 +48,57 @@ class EndToEndEvaluationTests(unittest.TestCase):
         matches = one_to_one_match(expected, predicted)
         self.assertEqual(1, len(matches))
 
-    def test_benchmark_reproduces_target_metric_shape(self):
-        cases = generate_controlled_pr_cases()
-        baseline = EndToEndEvaluationHarness().run(baseline_reviewer(), cases)
-        candidate = EndToEndEvaluationHarness(repairer=FixtureRepairer()).run(
-            candidate_reviewer(), cases
-        )
-        self.assertEqual((25, 5, 15), (
-            baseline["metrics"]["tp"],
-            baseline["metrics"]["fp"],
-            baseline["metrics"]["fn"],
-        ))
-        self.assertEqual((33, 7, 7), (
-            candidate["metrics"]["tp"],
-            candidate["metrics"]["fp"],
-            candidate["metrics"]["fn"],
-        ))
-        self.assertEqual(0.7143, baseline["metrics"]["f1"])
-        self.assertEqual(0.825, candidate["metrics"]["f1"])
-        self.assertEqual(0.9474, candidate["metrics"]["high_risk_recall"])
-        self.assertEqual(0.9167, candidate["metrics"]["clean_accuracy"])
-        self.assertEqual(1.0, candidate["metrics"]["execution_success_rate"])
-        self.assertEqual(0.7879, candidate["metrics"]["safe_fix_rate"])
-        self.assertEqual(0.65, candidate["metrics"]["e2e_security_fix_rate"])
-        gate = comparison_summary(baseline, candidate)["release_gate"]
-        self.assertTrue(gate["quantitative_passed"])
-        self.assertFalse(gate["production_activation_allowed"])
-        self.assertFalse(gate["passed"])
+    def test_one_to_one_matching_uses_explicit_cwe_not_random_rule_id(self):
+        expected = [{
+            "path": "src/a.py", "start_line": 10, "end_line": 10,
+            "cwe": "CWE-95", "severity": "critical",
+        }]
+        predicted = [Finding(
+            "MODEL-GENERATED-LABEL", Severity.CRITICAL, "a",
+            "long enough explanation", "src/a.py", 10, "eval(x)",
+            "replace eval safely", "add malicious input test", 0.9,
+            cwe="CWE-95",
+        )]
+        self.assertEqual(1, len(one_to_one_match(expected, predicted)))
+
+    def test_one_to_one_matching_rejects_unknown_rule_without_cwe(self):
+        expected = [{
+            "path": "src/a.py", "start_line": 10, "end_line": 10,
+            "cwe": "CWE-95", "severity": "critical",
+        }]
+        predicted = [Finding(
+            "MODEL-GENERATED-LABEL", Severity.CRITICAL, "a",
+            "long enough explanation", "src/a.py", 10, "eval(x)",
+            "replace eval safely", "add malicious input test", 0.9,
+        )]
+        self.assertEqual([], one_to_one_match(expected, predicted))
+
+    def test_prompt_replay_accepts_model_label_when_cwe_is_canonical(self):
+        case = {
+            "name": "canonical-cwe",
+            "diff": "--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n-old\n+eval(data)\n",
+            "expected": [{
+                "path": "a.py", "line": 1, "rule_id": "SEC-EVAL",
+                "min_severity": "high",
+            }],
+        }
+
+        class Reviewer:
+            name = "test"
+
+            def review(self, _diff, parsed):
+                line = parsed.added_lines[0]
+                return [Finding(
+                    "MODEL-LABEL", Severity.CRITICAL, "x", "x",
+                    line.path, line.line, line.content, "fix", "test", 0.9,
+                    cwe="CWE-95",
+                )]
+
+        report = RegressionEvaluator(lambda _prompt: Reviewer()).run("p", [case])
+        self.assertEqual(1, report["case_results"][0]["tp"])
 
     def test_dataset_round_trip_has_stable_fingerprint(self):
-        cases = generate_controlled_pr_cases()
+        cases = load_controlled_pr_cases()
         handle, path = tempfile.mkstemp(suffix=".jsonl")
         os.close(handle)
         try:

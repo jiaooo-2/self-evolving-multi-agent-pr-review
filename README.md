@@ -2,63 +2,117 @@
 
 > Self-Evolving Multi-Agent PR Risk Review and Repair System
 
-EvoAgent 是一个面向 Pull Request 的自进化多智能体审查与安全修复平台。它通过协作式 Agent 识别 PR 风险、生成可验证的修复建议，并将任务生命周期、预算、失败恢复和审计置于 Harness 中，把具体能力封装为可替换的 Skill。
+EvoAgent 是一个面向 Pull Request 的多智能体代码审查平台。它以有界、可审计的 Agent 协作完成风险识别与修复建议，并通过评测门禁让审查策略和领域 Skill 在可验证的范围内持续演进。
 
-当前支持：
+## 核心能力
 
-- 审查统一 diff，输出结构化问题、修复建议和测试建议
-- GitHub `pull_request` webhook（`opened`、`reopened`、`synchronize`）
-- OpenAI 兼容模型；未配置模型时自动使用确定性的本地规则审查器
-- SQLite 保存任务状态、执行轨迹和最终报告
-- JSON API 与 Markdown 报告
-- webhook HMAC-SHA256 签名校验，以及可选的 GitHub PR 评论回写
-- Web 管理台、任务 Dashboard 与 Prometheus 指标
-- 安全、可靠性、AI 和动态 Skill Agent 并行协作
-- 独立分支上的保守型自动修复提交
-- PostgreSQL、Redis 生产模式
-- 失败案例回流、提示词评测、版本激活与回滚
-- LangGraph 节点编排、持久化 checkpoint 与任务断点续跑
-- Redis Streams ACK、Worker 租约、指数退避重试和死信队列
-- Webhook delivery 幂等、重放时间窗与评论 upsert
-- 用户登录、RBAC、租户/仓库隔离和不可变管理审计
-- 动态 Skill manifest 校验、签名校验和隔离进程沙箱
-- 自动修复后的编译/测试门禁、灰度发布与影子流量
-- OpenTelemetry Trace、Prometheus 指标和持久化告警
+- **多智能体审查**：Lead 负责拆解、风险分级与最终综合；Security、Correctness/Reliability Worker 分别取证；Critic 独立质疑候选结论，降低误报。
+- **有界执行**：每个角色都受调用次数、Token、时间和工具权限约束；普通任务单轮完成，高风险任务最多允许一轮返工。
+- **证据驱动的结论**：高风险问题需要关联 AST、符号、扫描器、Git 上下文或测试输出等证据，且只报告本次改动引入的问题。
+- **自动修复闭环**：支持 LLM 统一补丁、AST/CST 分析、修复前后测试对比；自动修复始终在独立分支生成 Draft PR，不直接改动原 PR 分支。
+- **自进化审查策略**：从已确认的失败反馈中进行根因聚类，生成受限的结构化候选（提示词补充、示例、委派规则、工具选择策略与预算），而非直接修改生产源码。
+- **可验证的版本激活**：候选策略必须在验证集达到最小提升，并在仓库隔离的隐藏 Holdout 集上通过受保护指标非退化门禁；所有候选、指标、激活决定均可追踪和回滚。
+- **可演进的 Agent Skills**：审查领域以独立 `SKILL.md` 工件管理。Skill 候选可单独回放评测、门禁、激活或回滚，避免让所有领域规则进入每个任务上下文。
+- **上下文与记忆管理**：按租户、仓库和任务隔离工作记忆与长期反馈记忆，支持检索、过期清理和任务结束后的经验沉淀。
+- **生产化运行能力**：支持 SQLite/PostgreSQL、Redis Streams、任务 checkpoint/续跑、租约、指数退避、死信队列、RBAC、审计日志、Prometheus 和 OpenTelemetry。
+
+## 架构概览
+
+```text
+GitHub Webhook / HTTP API
+            │
+            ▼
+      ReviewService ─── Task Store (SQLite / PostgreSQL)
+            │
+            ▼
+  Review Harness / Agent Runtime
+  checkpoint · budget · trace · resume
+            │
+            ├── Diff / AST / Repository Tools / Scanners
+            ├── Context Manager + scoped Memory
+            └── Agentic Review
+                  ├── Lead：拆解、风险分级、汇总
+                  ├── Security Worker：输入、权限、敏感数据、危险调用链
+                  ├── Correctness/Reliability Worker：状态、异常、并发、兼容性
+                  └── Critic：独立质疑、反例与证据挑战
+                            │
+                            ▼
+                    Finding / release gates
+```
+
+## 自进化流程
+
+```text
+已确认反馈 / 失败轨迹
+          │
+          ▼
+根因聚类与结构化候选生成
+          │  仅允许策略、示例、委派、工具选择与预算调整
+          ▼
+验证集回放：候选必须达到最小提升
+          │
+          ▼
+隐藏 Holdout 回放：受保护指标不得退化
+          │
+          ├── 通过 → 持久化、激活，可灰度/影子验证
+          └── 不通过或数据不足 → 保留为 deferred，不自动上线
+```
+
+系统同时支持两类独立演化对象：
+
+1. `llm-review` 审查策略：基于失败轨迹生成并评估结构化候选；
+2. Agent Skill：以 `SKILL.md` 为版本化工件，按领域独立评测、激活和回滚。
+
+## 内置审查领域
+
+| Skill | 关注点 |
+|---|---|
+| `security-review` | 鉴权、输入边界、敏感数据、危险调用链 |
+| `correctness-review` | 状态转换、边界条件、异常处理和行为正确性 |
+| `reliability-review` | 并发、重试、资源生命周期和故障恢复 |
+| `performance-review` | 算法复杂度、热点路径和资源消耗 |
+| `database-review` | 数据一致性、事务、查询和迁移风险 |
+| `api-compatibility` | API 兼容性与契约变更 |
+| `observability-review` | 日志、指标、追踪和可诊断性 |
+| `test-quality` | 测试覆盖、断言质量与回归风险 |
 
 ## 快速开始
 
-项目使用 Python 3.11。先安装锁定范围内的运行依赖，并配置本地管理员：
+要求：Python 3.11+，以及一个 OpenAI Chat Completions 兼容模型。`agentic` 审查模式需要模型配置；未配置模型时服务可启动，但不能提交多智能体审查任务。
 
 ```powershell
 python -m pip install -r requirements.txt
-$env:EVOAGENT_AUTH_SECRET = '<至少 32 字节随机值>'
+
+$bytes = New-Object byte[] 32
+[Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+$env:EVOAGENT_AUTH_REQUIRED = 'true'
+$env:EVOAGENT_AUTH_SECRET = [Convert]::ToBase64String($bytes)
 $env:EVOAGENT_BOOTSTRAP_ADMIN_USERNAME = 'admin'
 $env:EVOAGENT_BOOTSTRAP_ADMIN_PASSWORD = '<至少 10 个字符的密码>'
+
+# 选择一个模型提供方，例如 DeepSeek
+$env:EVOAGENT_LLM_PROVIDER = 'deepseek'
+$env:EVOAGENT_DEEPSEEK_API_KEY = '<你的 API Key>'
+
 python -m evoagent
 ```
 
-服务默认监听 `127.0.0.1:8080`。启动后打开 `http://127.0.0.1:8080/` 登录管理台。API 先登录并携带 Bearer Token：
+服务默认运行于 `http://127.0.0.1:8080/`。登录后可通过 API 创建审查任务：
 
 ```powershell
 $session = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8080/v1/auth/login `
   -ContentType 'application/json' `
   -Body (@{username='admin'; password='<你的密码>'} | ConvertTo-Json)
 $headers = @{Authorization="Bearer $($session.access_token)"}
+
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8080/v1/reviews `
-  -Headers $headers `
-  -ContentType 'application/json' `
+  -Headers $headers -ContentType 'application/json' `
   -Body (@{
     repository = 'demo/api'
     pull_request = 12
-    diff = "diff --git a/app.py b/app.py`n--- a/app.py`n+++ b/app.py`n@@ -1 +1,2 @@`n+password = 'secret'`n+eval(user_input)"
+    mode = 'agentic'
+    diff = '<unified diff>'
   } | ConvertTo-Json)
-```
-
-查询任务：
-
-```powershell
-Invoke-RestMethod -Headers $headers http://127.0.0.1:8080/v1/tasks/<task-id>
-Invoke-WebRequest -Headers $headers http://127.0.0.1:8080/v1/tasks/<task-id>/report
 ```
 
 运行测试：
@@ -67,118 +121,33 @@ Invoke-WebRequest -Headers $headers http://127.0.0.1:8080/v1/tasks/<task-id>/rep
 python -m unittest discover -s tests -v
 ```
 
-## 模型配置
+## GitHub 集成
 
-默认 `EVOAGENT_LLM_PROVIDER=local`，此时只运行确定性的本地规则 Agent，不会调用大模型。
+系统通过 GitHub `pull_request` Webhook 接收 `opened`、`reopened` 和 `synchronize` 事件。GitHub 无法访问本机回环地址，因此本地调试时需使用 Cloudflare Tunnel、ngrok 或其他公网 HTTPS 转发服务，将公网 `/webhooks/github` 转发到本机服务。
 
-DeepSeek 官方 API（按 Token 计费）：
+建议使用 fine-grained Personal Access Token，并只为目标仓库授予所需最小权限：读取 PR Diff 需要 `Contents: Read` 和 `Pull requests: Read`；回写评论和创建修复分支时再授予对应写权限。
 
-```powershell
-$env:EVOAGENT_LLM_PROVIDER = 'deepseek'
-$env:EVOAGENT_DEEPSEEK_API_KEY = '<deepseek-api-key>'
-python -m evoagent
-```
+## 演化安全边界
 
-通过 OpenRouter 使用有速率限制、可用性可能变化的 DeepSeek 免费模型：
+- 候选不会直接产出或写入生产 Python 源码；
+- 隐藏 Holdout 的案例内容不会通过 API 暴露；
+- 验证/隐藏集不足、模型未配置或指标退化时，候选保持 `deferred`，不会自动激活；
+- 修复提交始终落在独立 `evoagent/fix-pr-*` 分支，并以 Draft PR 形式交由人工审核；
+- 密钥只从环境变量或被忽略的 `.env` 读取，绝不提交到仓库。
 
-```powershell
-$env:EVOAGENT_LLM_PROVIDER = 'openrouter-deepseek-free'
-$env:EVOAGENT_OPENROUTER_API_KEY = '<openrouter-api-key>'
-python -m evoagent
-```
+## 主要 API
 
-如果指定的免费 DeepSeek 版本下线，可将 `EVOAGENT_LLM_MODEL` 改为 OpenRouter 当前提供的其他 `:free` 模型，或把 Provider 改为 `openrouter-free` 让免费路由自动选择可用模型。
-
-任意其他 OpenAI Chat Completions 兼容端点使用 `custom`：
-
-```powershell
-$env:EVOAGENT_LLM_PROVIDER = 'custom'
-$env:EVOAGENT_LLM_BASE_URL = 'https://example.com/v1'
-$env:EVOAGENT_LLM_API_KEY = '<token>'
-$env:EVOAGENT_LLM_MODEL = '<model-name>'
-```
-
-密钥只通过环境变量读取，不要提交到仓库。
-
-## 评测与提示词进化
-
-服务启动时会建立基础验证集和隐藏回归集。候选提示词不会接受调用方提供的“回归分数”作为上线依据，而是：
-
-1. 使用当前提示词和候选提示词分别回放同一批验证 Diff；
-2. 计算精确率、召回率、F1、严重级别正确率、高风险召回率、干净样本正确率和执行成功率；调用失败会按漏报或失败的干净样本计分；
-3. 候选必须在验证集达到最小提升，并通过隐藏集的分数、精确率、召回率和高风险召回率非退化门禁；
-4. 没有配置大模型，或验证集、隐藏集样本不足时只保存候选，状态为 `deferred`；
-5. 评测记录包含提示词和数据集 SHA-256 指纹，隐藏集只持久化聚合指标，不暴露案例明细；
-6. 没有新增有效反馈信号时不会重复创建内容相同的候选版本；
-7. 所有评测运行、版本、指标和激活决定均持久化，可回滚。
-
-可通过 `POST /v1/evaluation/cases` 增加版本化样本，`split` 支持 `train`、`validation` 和 `holdout`。样本名称和内容绑定且不可覆盖；修订样本必须使用新名称，重复提交相同内容则保持幂等。期望结果可选填 `rule_id`，用于避免“同一行但错误类别”的结果被算作命中。`POST /v1/evolution/auto` 会从未解决反馈生成候选并执行同样的真实回放门禁。
-
-相关门禁可通过以下环境变量调整：
-
-- `EVOAGENT_EVAL_MIN_CASES`：验证集最少样本数；
-- `EVOAGENT_EVAL_MIN_HOLDOUT_CASES`：隐藏集最少样本数；
-- `EVOAGENT_EVAL_MAX_CASES`：每个数据分区单次最多回放样本数；
-- `EVOAGENT_EVAL_MIN_IMPROVEMENT`：验证集最小分数提升；
-- `EVOAGENT_EVAL_MAX_METRIC_REGRESSION`：受保护指标允许的最大退化，默认 `0`。
-
-## GitHub Webhook
-
-Webhook 地址为 `POST /webhooks/github`，事件选择 **Pull requests**。建议配置：
-
-```powershell
-$env:EVOAGENT_GITHUB_WEBHOOK_SECRET = '<webhook-secret>'
-$env:EVOAGENT_GITHUB_TOKEN = '<fine-grained-token>'
-```
-
-默认只返回审查结果，不向 GitHub 写入内容。要自动发布 PR 评论，需显式启用：
-
-```powershell
-$env:EVOAGENT_AUTO_POST_REVIEW = 'true'
-```
-
-Token 至少需要目标仓库 Pull requests 的读权限；启用评论回写时需要写权限。Webhook 下载 PR diff 时优先使用 payload 中的 `diff_url`。
-
-### GitHub App 安装
-
-在 GitHub Developer settings 创建 GitHub App：
-
-- Setup URL：`<公网地址>/github/setup`
-- Webhook URL：`<公网地址>/webhooks/github`
-- Webhook event：Pull request
-- Repository permissions：Contents `Read & write`、Pull requests `Read & write`、Metadata `Read-only`
-
-下载 App 私钥后配置 `EVOAGENT_GITHUB_APP_ID`、`EVOAGENT_GITHUB_APP_SLUG`、`EVOAGENT_GITHUB_PRIVATE_KEY_PATH` 和 webhook secret。管理台的 GitHub App 页面会进入正式安装流程。
-
-自动修复只覆盖可确定安全的规则，例如调试输出、`shell=True` 和硬编码 Python 凭据；结果始终提交到新的 `evoagent/fix-pr-*` 分支，不直接修改源分支。
-
-## API
-
-| 方法 | 路径 | 说明 |
+| 方法 | 路径 | 用途 |
 |---|---|---|
-| `GET` | `/health` | 健康检查 |
-| `POST` | `/v1/auth/login` | 登录并获取租户绑定的短期 Bearer Token |
-| `POST` | `/v1/reviews` | 创建同步审查任务 |
-| `POST` | `/v1/reviews?async=true` | 创建异步审查任务 |
-| `GET` | `/v1/tasks/{id}` | 获取状态、轨迹和报告 |
-| `GET` | `/v1/tasks/{id}/report` | 获取 Markdown 报告 |
-| `POST` | `/v1/tasks/{id}/fix` | 创建自动修复分支和提交 |
-| `POST` | `/v1/tasks/{id}/feedback` | 回流误报、漏报或坏修复 |
-| `POST` | `/v1/tasks/{id}/cancel` | 请求取消任务 |
-| `POST` | `/v1/tasks/{id}/resume` | 从最近 checkpoint 续跑任务 |
-| `POST` | `/webhooks/github` | 接收 GitHub PR webhook |
-| `POST` | `/v1/skills/reload` | 动态重新加载 Skill |
-| `POST` | `/v1/evolution/auto` | 从失败案例生成并评测提示词版本 |
-| `POST` | `/v1/evolution/propose` | 评测指定提示词候选版本 |
-| `GET/POST` | `/v1/evaluation/cases` | 查询或增加版本化评测样本 |
-| `GET` | `/v1/evolution/status` | 查询模型与评测门禁就绪状态 |
-| `GET` | `/v1/evolution/runs` | 查询持久化的新旧版本评测记录 |
-| `POST` | `/v1/skills/{name}/versions/{version}/activate` | 激活或回滚版本 |
-| `GET` | `/metrics` | Prometheus 文本指标 |
-| `GET` | `/api/alerts` | 查询租户告警 |
-| `GET` | `/api/audit` | 查询租户审计日志 |
-| `GET` | `/api/queue/dead-letters` | 查询死信任务 |
-| `POST` | `/v1/queue/dead-letters/replay` | 重放死信任务 |
-| `GET/POST` | `/api/deployments/llm-review`、`/v1/deployments/llm-review` | 查询或配置灰度/影子发布 |
+| `POST` | `/v1/reviews` | 创建审查任务 |
+| `GET` | `/v1/tasks/{id}` | 获取任务状态、轨迹与报告 |
+| `POST` | `/v1/tasks/{id}/fix` | 创建独立修复分支与 Draft PR |
+| `POST` | `/v1/tasks/{id}/feedback` | 回流误报、漏报或坏修复反馈 |
+| `POST` | `/v1/evolution/auto` | 由确认反馈生成策略候选并评测 |
+| `GET` | `/v1/evolution/status` | 查看策略演化门禁与版本状态 |
+| `POST` | `/v1/skill-evolution/auto` | 生成并评测 Agent Skill 候选 |
+| `GET` | `/v1/skill-evolution/runs` | 查看 Skill 演化运行记录 |
+| `POST` | `/v1/skills/{name}/versions/{version}/activate` | 激活或回滚审查策略版本 |
+| `POST` | `/v1/skill-evolution/{name}/versions/{version}/activate` | 激活或回滚 Skill 版本 |
 
-`POST /v1/reviews` 的 `diff` 最大默认 1 MiB；单任务默认最多 8 步、120 秒。可通过环境变量调整，详见 `.env.example`。
+详细环境变量、Webhook 配置与 API 契约见 [`.env.example`](.env.example) 和源码中的 API 实现。
