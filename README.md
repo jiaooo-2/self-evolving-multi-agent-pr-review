@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="docs/images/logo.svg" width="96" height="96" alt="EvoAgent logo">
+  <img src="docs/images/logo.svg" width="96" height="96" alt="项目图标">
 </p>
 
-<h1 align="center">EvoAgent</h1>
+<h1 align="center">自进化多智能体 PR 风险审查与修复系统</h1>
 
-<p align="center"><strong>自进化多智能体 PR 风险审查与修复系统</strong></p>
+<p align="center"><strong>有依据的审查 · 经验证的修复建议 · 由反馈驱动的改进</strong></p>
 
 <p align="center">审查代码变更 · 解释风险依据 · 验证修复补丁 · 从反馈中改进</p>
 
@@ -29,7 +29,7 @@
 
 ---
 
-EvoAgent 帮助开发者把 PR 中的代码变更转化为**带位置、证据、修复建议和测试建议的审查报告**。Lead、领域 Worker 与 Critic 分工协作；确认后的反馈可以用于生成新的审查策略或 Skill，再通过回放评测决定是否启用。
+本项目帮助开发者把 PR 中的代码变更转化为**带位置、证据、修复建议和测试建议的审查报告**。Lead、领域 Worker 与 Critic 分工协作；确认后的反馈可以用于生成新的审查策略或 Skill，再通过回放评测决定是否启用。
 
 适合希望自部署 PR 审查服务、观察多智能体协作过程，或研究反馈驱动演化的开发者。
 
@@ -41,7 +41,7 @@ EvoAgent 帮助开发者把 PR 中的代码变更转化为**带位置、证据�
 
 *上图为结果示意，不是实际运行截图或基准测试结果。*
 
-| 你想解决的问题 | EvoAgent 提供的结果 |
+| 你想解决的问题 | 项目提供的结果 |
 | --- | --- |
 | 不知道这次改动引入了什么风险 | 新增代码行上的问题定位、严重性、解释与证据 |
 | 审查意见太泛，难以跟进 | 针对问题的修复建议与测试建议 |

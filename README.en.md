@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="docs/images/logo.svg" width="96" height="96" alt="EvoAgent logo">
+  <img src="docs/images/logo.svg" width="96" height="96" alt="Project logo">
 </p>
 
-<h1 align="center">EvoAgent</h1>
+<h1 align="center">Self-Evolving Multi-Agent PR Risk Review &amp; Repair</h1>
 
-<p align="center"><strong>Self-Evolving Multi-Agent PR Review &amp; Repair</strong></p>
+<p align="center"><strong>Evidence-backed reviews · Verified fix suggestions · Feedback-driven improvement</strong></p>
 
 <p align="center">Review changes · Explain risks · Verify fixes · Learn from feedback</p>
 
@@ -29,7 +29,7 @@
 
 ---
 
-EvoAgent turns pull request changes into **review reports with locations, evidence, fix suggestions and test recommendations**. A Lead coordinates specialist Workers and a Critic. Confirmed feedback can inform new review policies and Skills, which are evaluated before activation.
+This project turns pull request changes into **review reports with locations, evidence, fix suggestions and test recommendations**. A Lead coordinates specialist Workers and a Critic. Confirmed feedback can inform new review policies and Skills, which are evaluated before activation.
 
 Built for developers who want to self-host PR review, inspect multi-agent collaboration, or experiment with feedback-driven evolution.
 
@@ -41,7 +41,7 @@ Built for developers who want to self-host PR review, inspect multi-agent collab
 
 *This is an illustrative example, not a product screenshot or benchmark result.*
 
-| Your question | EvoAgent's output |
+| Your question | Project output |
 | --- | --- |
 | What risk did this change introduce? | Findings on added lines, severity, explanations and evidence |
 | What should I do next? | Fix suggestions and targeted test recommendations |
@@ -188,7 +188,6 @@ The current source package is missing `evaluation_data/pr_diff_100.jsonl` and `e
 
 Reproducible bugs, false-positive / missed-issue examples, Skill improvements and documentation contributions are welcome. Remove secrets, private code and personal data; explain the expected and actual behavior.
 
-If EvoAgent helps you, consider giving it a star and sharing your feedback.
+If this project helps you, consider giving it a star and sharing your feedback.
 
 [MIT License](LICENSE)
-
